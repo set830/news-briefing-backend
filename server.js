@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk');
-const axios = require('axios');
+const OpenAI = require('openai');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -11,6 +11,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.post('/api/generate', async (req, res) => {
   const { articles, tone } = req.body;
@@ -96,29 +97,16 @@ Write the complete briefing script now:`;
 
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to ElevenLabs...`);
 
-    // Call ElevenLabs
-    const elResponse = await axios.post(
-      'https://api.elevenlabs.io/v1/text-to-speech/wWWn96OtTHu1sn8SRGEr',
-      {
-        text: script,
-        model_id: 'eleven_turbo_v2_5',
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-        },
-      },
-      {
-        headers: {
-          'xi-api-key': process.env.ELEVENLABS_API_KEY,
-          'Content-Type': 'application/json',
-          Accept: 'audio/mpeg',
-        },
-        responseType: 'arraybuffer',
-        timeout: 120000,
-      }
-    );
+    // Call OpenAI TTS
+    const ttsResponse = await openai.audio.speech.create({
+      model: 'gpt-4o-mini-tts',
+      voice: 'ash',
+      input: script,
+      response_format: 'mp3',
+    });
 
-    const audioBase64 = Buffer.from(elResponse.data).toString('base64');
+    const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+    const audioBase64 = audioBuffer.toString('base64');
     console.log('Audio generated successfully.');
 
     res.json({ script, audio: audioBase64, audioType: 'audio/mpeg', articleBreaks });

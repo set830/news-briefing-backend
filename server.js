@@ -45,6 +45,7 @@ RULES FOR "Summarize" ARTICLES:
 - Include the author's name ONLY if the piece is clearly an op-ed or opinion column. Otherwise omit it entirely.
 - Write one paragraph summary in the chosen tone.
 - Follow the summary with 3 to 4 key points. Introduce them naturally for audio: "A few key points: First, ... Second, ... Third, ..." — do NOT use bullet symbols or dashes.
+- If the article includes a specific example, anecdote, or story that meaningfully illustrates one of the key points, weave it in naturally after that point. Only include it if it genuinely helps the listener understand the concept — skip it if it is tangential or redundant.
 
 RULES FOR "Full Article" ARTICLES:
 - Remove everything that is not the article body: ads, related article links, newsletter prompts, comment sections, social sharing prompts, author bios at the bottom, and any other website chrome.

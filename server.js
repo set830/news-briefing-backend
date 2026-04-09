@@ -98,15 +98,34 @@ Write the complete briefing script now:`;
 
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to ElevenLabs...`);
 
-    // Call OpenAI TTS
-    const ttsResponse = await openai.audio.speech.create({
-      model: 'gpt-4o-mini-tts',
-      voice: 'ash',
-      input: script,
-      response_format: 'mp3',
-    });
+    // Split script into ~7000 char chunks (safely under the 2000 token limit)
+    const chunkText = (text, maxChars = 7000) => {
+      if (text.length <= maxChars) return [text];
+      const chunks = [];
+      let remaining = text;
+      while (remaining.length > maxChars) {
+        let splitAt = remaining.lastIndexOf('. ', maxChars);
+        if (splitAt === -1) splitAt = remaining.lastIndexOf(' ', maxChars);
+        if (splitAt === -1) splitAt = maxChars;
+        else splitAt += 1;
+        chunks.push(remaining.slice(0, splitAt).trim());
+        remaining = remaining.slice(splitAt).trim();
+      }
+      if (remaining.length > 0) chunks.push(remaining);
+      return chunks;
+    };
 
-    const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+    // Call OpenAI TTS for each chunk and concatenate
+    const chunks = chunkText(script);
+    const audioBuffers = await Promise.all(chunks.map(chunk =>
+      openai.audio.speech.create({
+        model: 'gpt-4o-mini-tts',
+        voice: 'ash',
+        input: chunk,
+        response_format: 'mp3',
+      }).then(r => r.arrayBuffer()).then(b => Buffer.from(b))
+    ));
+    const audioBuffer = Buffer.concat(audioBuffers);
     const audioBase64 = audioBuffer.toString('base64');
     console.log('Audio generated successfully.');
 

@@ -102,7 +102,7 @@ Write the complete briefing script now:`;
       return { n: marker.num, frac: Math.min(1, adjustedPos / totalLen) };
     });
 
-    console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to ElevenLabs...`);
+    console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to OpenAI TTS...`);
 
     // Split script into ~7000 char chunks (safely under the 2000 token limit)
     const chunkText = (text, maxChars = 7000) => {

@@ -19,30 +19,17 @@ app.use(express.json({ limit: '10mb' }));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.post('/api/generate', async (req, res) => {
-  const { articles, tone } = req.body;
+const buildPrompt = (filled, tone) => {
+  const articlesBlock = filled
+    .map((a, i) => `ARTICLE ${i + 1} [Mode: ${a.mode === 'full' ? 'Full Article' : 'Summarize'}]\n${a.text.trim()}`)
+    .join('\n\n---\n\n');
 
-  if (!articles || !Array.isArray(articles)) {
-    return res.status(400).json({ error: 'Invalid request: articles must be an array.' });
-  }
+  const toneInstruction =
+    tone === 'conversational'
+      ? 'CONVERSATIONAL — write summaries the way a friend would tell another friend about the story: fun, interesting, informal, with some personality. Do not overdo it.'
+      : 'DIRECT — write summaries that match and preserve the tone and voice of the original article.';
 
-  const filled = articles.filter(a => a.text && a.text.trim().length > 0);
-  if (filled.length === 0) {
-    return res.status(400).json({ error: 'No articles provided.' });
-  }
-
-  try {
-    // Build Claude prompt
-    const articlesBlock = filled
-      .map((a, i) => `ARTICLE ${i + 1} [Mode: ${a.mode === 'full' ? 'Full Article' : 'Summarize'}]\n${a.text.trim()}`)
-      .join('\n\n---\n\n');
-
-    const toneInstruction =
-      tone === 'conversational'
-        ? 'CONVERSATIONAL — write summaries the way a friend would tell another friend about the story: fun, interesting, informal, with some personality. Do not overdo it.'
-        : 'DIRECT — write summaries that match and preserve the tone and voice of the original article.';
-
-    const prompt = `You are producing a personal audio news briefing to be read aloud by a text-to-speech voice. Follow all instructions precisely.
+  return `You are producing a personal audio news briefing to be read aloud by a text-to-speech voice. Follow all instructions precisely.
 
 TONE SETTING: ${toneInstruction}
 
@@ -75,64 +62,131 @@ HERE ARE THE ARTICLES:
 ${articlesBlock}
 
 Write the complete briefing script now:`;
+};
 
+const parseScript = (rawScript) => {
+  const markerRegex = /<<ARTICLE_(\d+)>>\n?/g;
+  const allMarkers = [];
+  let m;
+  while ((m = markerRegex.exec(rawScript)) !== null) {
+    allMarkers.push({ fullMatch: m[0], pos: m.index, num: parseInt(m[1]) });
+  }
+
+  const script = rawScript.replace(/<<ARTICLE_\d+>>\n?/g, '');
+  const totalLen = script.length;
+
+  let cumulativeRemoved = 0;
+  const articleBreaks = totalLen === 0 ? [] : allMarkers.map(marker => {
+    const adjustedPos = marker.pos - cumulativeRemoved;
+    cumulativeRemoved += marker.fullMatch.length;
+    return { n: marker.num, frac: Math.min(1, adjustedPos / totalLen) };
+  });
+
+  return { script, articleBreaks };
+};
+
+const chunkText = (text, maxChars = 7000) => {
+  if (text.length <= maxChars) return [text];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxChars) {
+    let splitAt = remaining.lastIndexOf('. ', maxChars);
+    if (splitAt === -1) splitAt = remaining.lastIndexOf(' ', maxChars);
+    if (splitAt === -1) splitAt = maxChars;
+    else splitAt += 1;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
+};
+
+const generateAudioFromScript = async (script) => {
+  const chunks = chunkText(script);
+  const audioBuffers = await Promise.all(chunks.map(chunk =>
+    openai.audio.speech.create({
+      model: 'gpt-4o-mini-tts',
+      voice: 'ash',
+      input: chunk,
+      response_format: 'mp3',
+    }).then(r => r.arrayBuffer()).then(b => Buffer.from(b))
+  ));
+  return Buffer.concat(audioBuffers).toString('base64');
+};
+
+// Step 1: Generate script with Claude
+app.post('/api/generate-script', async (req, res) => {
+  const { articles, tone } = req.body;
+
+  if (!articles || !Array.isArray(articles)) {
+    return res.status(400).json({ error: 'Invalid request: articles must be an array.' });
+  }
+
+  const filled = articles.filter(a => a.text && a.text.trim().length > 0);
+  if (filled.length === 0) {
+    return res.status(400).json({ error: 'No articles provided.' });
+  }
+
+  try {
+    const prompt = buildPrompt(filled, tone);
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 8192,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const rawScript = message.content[0].text;
+    const { script, articleBreaks } = parseScript(message.content[0].text);
+    console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks.`);
+    res.json({ script, articleBreaks });
+  } catch (err) {
+    console.error('Script error:', err.message);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
 
-    // Extract article break positions before stripping markers
-    const markerRegex = /<<ARTICLE_(\d+)>>\n?/g;
-    const allMarkers = [];
-    let m;
-    while ((m = markerRegex.exec(rawScript)) !== null) {
-      allMarkers.push({ fullMatch: m[0], pos: m.index, num: parseInt(m[1]) });
-    }
+// Step 2: Generate audio from script
+app.post('/api/generate-audio', async (req, res) => {
+  const { script } = req.body;
 
-    const script = rawScript.replace(/<<ARTICLE_\d+>>\n?/g, '');
-    const totalLen = script.length;
+  if (!script || typeof script !== 'string' || script.trim().length === 0) {
+    return res.status(400).json({ error: 'Invalid request: script must be a non-empty string.' });
+  }
 
-    let cumulativeRemoved = 0;
-    const articleBreaks = totalLen === 0 ? [] : allMarkers.map(marker => {
-      const adjustedPos = marker.pos - cumulativeRemoved;
-      cumulativeRemoved += marker.fullMatch.length;
-      return { n: marker.num, frac: Math.min(1, adjustedPos / totalLen) };
+  try {
+    const audioBase64 = await generateAudioFromScript(script);
+    console.log('Audio generated successfully.');
+    res.json({ audio: audioBase64, audioType: 'audio/mpeg' });
+  } catch (err) {
+    console.error('Audio error:', err.message);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Legacy combined endpoint (kept for local dev convenience)
+app.post('/api/generate', async (req, res) => {
+  const { articles, tone } = req.body;
+
+  if (!articles || !Array.isArray(articles)) {
+    return res.status(400).json({ error: 'Invalid request: articles must be an array.' });
+  }
+
+  const filled = articles.filter(a => a.text && a.text.trim().length > 0);
+  if (filled.length === 0) {
+    return res.status(400).json({ error: 'No articles provided.' });
+  }
+
+  try {
+    const prompt = buildPrompt(filled, tone);
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: prompt }],
     });
 
+    const { script, articleBreaks } = parseScript(message.content[0].text);
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to OpenAI TTS...`);
 
-    // Split script into ~7000 char chunks (safely under the 2000 token limit)
-    const chunkText = (text, maxChars = 7000) => {
-      if (text.length <= maxChars) return [text];
-      const chunks = [];
-      let remaining = text;
-      while (remaining.length > maxChars) {
-        let splitAt = remaining.lastIndexOf('. ', maxChars);
-        if (splitAt === -1) splitAt = remaining.lastIndexOf(' ', maxChars);
-        if (splitAt === -1) splitAt = maxChars;
-        else splitAt += 1;
-        chunks.push(remaining.slice(0, splitAt).trim());
-        remaining = remaining.slice(splitAt).trim();
-      }
-      if (remaining.length > 0) chunks.push(remaining);
-      return chunks;
-    };
-
-    // Call OpenAI TTS for each chunk and concatenate
-    const chunks = chunkText(script);
-    const audioBuffers = await Promise.all(chunks.map(chunk =>
-      openai.audio.speech.create({
-        model: 'gpt-4o-mini-tts',
-        voice: 'ash',
-        input: chunk,
-        response_format: 'mp3',
-      }).then(r => r.arrayBuffer()).then(b => Buffer.from(b))
-    ));
-    const audioBuffer = Buffer.concat(audioBuffers);
-    const audioBase64 = audioBuffer.toString('base64');
+    const audioBase64 = await generateAudioFromScript(script);
     console.log('Audio generated successfully.');
 
     res.json({ script, audio: audioBase64, audioType: 'audio/mpeg', articleBreaks });

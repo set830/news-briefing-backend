@@ -144,7 +144,7 @@ app.post('/api/generate-script', async (req, res) => {
   }
 });
 
-// Step 2: Generate audio from script (SSE stream to keep connection alive)
+// Step 2: Generate audio from script
 app.post('/api/generate-audio', async (req, res) => {
   const { script } = req.body;
 
@@ -152,26 +152,13 @@ app.post('/api/generate-audio', async (req, res) => {
     return res.status(400).json({ error: 'Invalid request: script must be a non-empty string.' });
   }
 
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-  });
-
-  const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 15000);
-
   try {
     const audioBase64 = await generateAudioFromScript(script);
-    clearInterval(keepAlive);
-    res.write(`data: ${JSON.stringify({ audio: audioBase64, audioType: 'audio/mpeg' })}\n\n`);
-    res.end();
     console.log('Audio generated successfully.');
+    res.json({ audio: audioBase64, audioType: 'audio/mpeg' });
   } catch (err) {
-    clearInterval(keepAlive);
-    res.write(`data: ${JSON.stringify({ error: err.message || 'Internal server error' })}\n\n`);
-    res.end();
     console.error('Audio error:', err.message);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 

@@ -161,7 +161,7 @@ app.post('/api/generate-script', async (req, res) => {
   }
 });
 
-// Step 2: Generate audio from script (SSE to prevent Railway gateway timeout)
+// Step 2: Generate audio from script — parallel TTS, stream raw binary MP3
 app.post('/api/generate-audio', async (req, res) => {
   const { script } = req.body;
 
@@ -169,27 +169,15 @@ app.post('/api/generate-audio', async (req, res) => {
     return res.status(400).json({ error: 'Invalid request: script must be a non-empty string.' });
   }
 
-  // Use SSE so keep-alive pings prevent Railway from closing the connection
-  // before audio generation completes. CORS headers already set by middleware.
-  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
-  res.flushHeaders();
-
-  const keepAlive = setInterval(() => res.write(': ping\n\n'), 10000);
-
   try {
-    await streamAudioFromScript(script, (chunkBase64, index, total) => {
-      console.log(`Audio chunk ${index + 1}/${total} generated.`);
-      res.write(`data: ${JSON.stringify({ audioChunk: chunkBase64, index, total })}\n\n`);
-    });
-    clearInterval(keepAlive);
-    console.log('Audio generation complete.');
-    res.write(`data: ${JSON.stringify({ done: true, audioType: 'audio/mpeg' })}\n\n`);
-    res.end();
+    const audioBase64 = await generateAudioFromScript(script);
+    const audioBuf = Buffer.from(audioBase64, 'base64');
+    console.log(`Audio generated successfully (${audioBuf.length} bytes).`);
+    res.set({ 'Content-Type': 'audio/mpeg', 'Content-Length': audioBuf.length, 'Cache-Control': 'no-cache' });
+    res.end(audioBuf);
   } catch (err) {
-    clearInterval(keepAlive);
     console.error('Audio error:', err.message);
-    res.write(`data: ${JSON.stringify({ error: err.message || 'Internal server error' })}\n\n`);
-    res.end();
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
 

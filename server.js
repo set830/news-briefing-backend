@@ -149,7 +149,9 @@ app.post('/api/generate-script', async (req, res) => {
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const { script, articleBreaks } = parseScript(message.content[0].text);
+    const textBlock = message.content.find(b => b.type === 'text');
+    if (!textBlock) throw new Error('No text content in Claude response');
+    const { script, articleBreaks } = parseScript(textBlock.text);
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks.`);
     res.json({ script, articleBreaks });
   } catch (err) {
@@ -211,7 +213,9 @@ app.post('/api/generate', async (req, res) => {
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const { script, articleBreaks } = parseScript(message.content[0].text);
+    const textBlock = message.content.find(b => b.type === 'text');
+    if (!textBlock) throw new Error('No text content in Claude response');
+    const { script, articleBreaks } = parseScript(textBlock.text);
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks. Sending to OpenAI TTS...`);
 
     const audioBase64 = await generateAudioFromScript(script);

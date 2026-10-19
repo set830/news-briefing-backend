@@ -114,6 +114,20 @@ const generateAudioFromScript = async (script) => {
   return Buffer.concat(audioBuffers).toString('base64');
 };
 
+const streamAudioFromScript = async (script, onChunk) => {
+  const chunks = chunkText(script);
+  for (let i = 0; i < chunks.length; i++) {
+    const buffer = await openai.audio.speech.create({
+      model: 'gpt-4o-mini-tts',
+      voice: 'ash',
+      input: chunks[i],
+      response_format: 'mp3',
+    }).then(r => r.arrayBuffer()).then(b => Buffer.from(b));
+    onChunk(buffer.toString('base64'), i, chunks.length);
+  }
+};
+
+
 // Step 1: Generate script with Claude
 app.post('/api/generate-script', async (req, res) => {
   const { articles, tone } = req.body;
@@ -160,10 +174,13 @@ app.post('/api/generate-audio', async (req, res) => {
   const keepAlive = setInterval(() => res.write(': ping\n\n'), 10000);
 
   try {
-    const audioBase64 = await generateAudioFromScript(script);
+    await streamAudioFromScript(script, (chunkBase64, index, total) => {
+      console.log(`Audio chunk ${index + 1}/${total} generated.`);
+      res.write(`data: ${JSON.stringify({ audioChunk: chunkBase64, index, total })}\n\n`);
+    });
     clearInterval(keepAlive);
-    console.log('Audio generated successfully.');
-    res.write(`data: ${JSON.stringify({ audio: audioBase64, audioType: 'audio/mpeg' })}\n\n`);
+    console.log('Audio generation complete.');
+    res.write(`data: ${JSON.stringify({ done: true, audioType: 'audio/mpeg' })}\n\n`);
     res.end();
   } catch (err) {
     clearInterval(keepAlive);

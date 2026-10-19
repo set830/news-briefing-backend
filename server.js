@@ -116,15 +116,16 @@ const generateAudioFromScript = async (script) => {
 
 const streamAudioFromScript = async (script, onChunk) => {
   const chunks = chunkText(script);
-  for (let i = 0; i < chunks.length; i++) {
-    const buffer = await openai.audio.speech.create({
+  await Promise.all(chunks.map((chunk, i) =>
+    openai.audio.speech.create({
       model: 'gpt-4o-mini-tts',
       voice: 'ash',
-      input: chunks[i],
+      input: chunk,
       response_format: 'mp3',
-    }).then(r => r.arrayBuffer()).then(b => Buffer.from(b));
-    onChunk(buffer.toString('base64'), i, chunks.length);
-  }
+    }).then(r => r.arrayBuffer()).then(b => {
+      onChunk(Buffer.from(b).toString('base64'), i, chunks.length);
+    })
+  ));
 };
 
 

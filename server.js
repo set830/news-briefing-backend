@@ -161,7 +161,7 @@ app.post('/api/generate-script', async (req, res) => {
   }
 });
 
-// Step 2: Generate audio from script — parallel TTS, stream raw binary MP3
+// Step 2: Generate audio from script — parallel TTS, chunked streaming response
 app.post('/api/generate-audio', async (req, res) => {
   const { script } = req.body;
 
@@ -170,14 +170,32 @@ app.post('/api/generate-audio', async (req, res) => {
   }
 
   try {
-    const audioBase64 = await generateAudioFromScript(script);
-    const audioBuf = Buffer.from(audioBase64, 'base64');
-    console.log(`Audio generated successfully (${audioBuf.length} bytes).`);
-    res.set({ 'Content-Type': 'audio/mpeg', 'Content-Length': audioBuf.length, 'Cache-Control': 'no-cache' });
-    res.end(audioBuf);
+    const chunks = chunkText(script);
+
+    // Kick off all TTS calls in parallel
+    const promises = chunks.map(chunk =>
+      openai.audio.speech.create({
+        model: 'gpt-4o-mini-tts',
+        voice: 'ash',
+        input: chunk,
+        response_format: 'mp3',
+      }).then(r => r.arrayBuffer()).then(b => Buffer.from(b))
+    );
+
+    res.set({ 'Content-Type': 'audio/mpeg', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache' });
+
+    // Await and stream each chunk in order — keeps connection alive during generation
+    for (const promise of promises) {
+      const buf = await promise;
+      res.write(buf);
+    }
+    res.end();
+    console.log(`Audio streamed successfully (${chunks.length} chunk(s)).`);
   } catch (err) {
     console.error('Audio error:', err.message);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
   }
 });
 

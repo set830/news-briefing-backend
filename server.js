@@ -172,22 +172,19 @@ app.post('/api/generate-audio', async (req, res) => {
   try {
     const chunks = chunkText(script);
 
-    // Kick off all TTS calls in parallel
-    const promises = chunks.map(chunk =>
-      openai.audio.speech.create({
+    res.set({ 'Content-Type': 'audio/mpeg', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache' });
+    res.flushHeaders();
+
+    // Process and write each chunk sequentially so data flows continuously,
+    // preventing Railway's proxy from timing out on an idle connection.
+    for (const chunk of chunks) {
+      const result = await openai.audio.speech.create({
         model: 'gpt-4o-mini-tts',
         voice: 'ash',
         input: chunk,
         response_format: 'mp3',
-      }).then(r => r.arrayBuffer()).then(b => Buffer.from(b))
-    );
-
-    res.set({ 'Content-Type': 'audio/mpeg', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache' });
-    res.flushHeaders(); // send headers immediately so Railway doesn't time out before first chunk
-
-    // Await and stream each chunk in order — keeps connection alive during generation
-    for (const promise of promises) {
-      const buf = await promise;
+      });
+      const buf = Buffer.from(await result.arrayBuffer());
       res.write(buf);
     }
     res.end();

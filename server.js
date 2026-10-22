@@ -183,6 +183,7 @@ app.post('/api/generate-audio', async (req, res) => {
     );
 
     res.set({ 'Content-Type': 'audio/mpeg', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache' });
+    res.flushHeaders(); // send headers immediately so Railway doesn't time out before first chunk
 
     // Await and stream each chunk in order — keeps connection alive during generation
     for (const promise of promises) {

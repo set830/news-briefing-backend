@@ -146,7 +146,7 @@ app.post('/api/generate-script', async (req, res) => {
     const prompt = buildPrompt(filled, tone);
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-5-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -172,7 +172,7 @@ app.post('/api/generate-audio', async (req, res) => {
   try {
     const chunks = chunkText(script);
 
-    res.set({ 'Content-Type': 'audio/mpeg', 'Transfer-Encoding': 'chunked', 'Cache-Control': 'no-cache' });
+    res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-cache' });
     res.flushHeaders();
 
     // Process and write each chunk sequentially so data flows continuously,
@@ -214,7 +214,7 @@ app.post('/api/generate', async (req, res) => {
     const prompt = buildPrompt(filled, tone);
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-5-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       messages: [{ role: 'user', content: prompt }],
     });
 

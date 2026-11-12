@@ -144,6 +144,8 @@ app.post('/api/generate-script', async (req, res) => {
 
   try {
     const prompt = buildPrompt(filled, tone);
+    res.set({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.flushHeaders();
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-5-5',
       max_tokens: 16000,
@@ -157,7 +159,9 @@ app.post('/api/generate-script', async (req, res) => {
     res.json({ script, articleBreaks });
   } catch (err) {
     console.error('Script error:', err.message);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
   }
 });
 

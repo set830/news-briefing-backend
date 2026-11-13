@@ -144,23 +144,34 @@ app.post('/api/generate-script', async (req, res) => {
 
   try {
     const prompt = buildPrompt(filled, tone);
-    res.set({ 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
-    res.flushHeaders();
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-5-5',
-      max_tokens: 16000,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    res.set('Content-Type', 'application/json');
+
+    // Write spaces periodically to keep Railway's proxy connection alive
+    // while waiting for the Claude API response. JSON.parse ignores leading whitespace.
+    const keepAlive = setInterval(() => { if (!res.writableEnded) res.write(' '); }, 20000);
+
+    let message;
+    try {
+      message = await anthropic.messages.create({
+        model: 'claude-sonnet-5-5',
+        max_tokens: 16000,
+        messages: [{ role: 'user', content: prompt }],
+      });
+    } finally {
+      clearInterval(keepAlive);
+    }
 
     const textBlock = message.content.find(b => b.type === 'text');
     if (!textBlock) throw new Error('No text content in Claude response');
     const { script, articleBreaks } = parseScript(textBlock.text);
     console.log(`Script generated (${script.length} chars), ${articleBreaks.length} article breaks.`);
-    res.json({ script, articleBreaks });
+    res.end(JSON.stringify({ script, articleBreaks }));
   } catch (err) {
     console.error('Script error:', err.message);
     if (!res.headersSent) {
       res.status(500).json({ error: err.message || 'Internal server error' });
+    } else {
+      res.end(JSON.stringify({ error: err.message || 'Internal server error' }));
     }
   }
 });

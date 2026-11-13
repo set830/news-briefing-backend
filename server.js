@@ -187,11 +187,11 @@ app.post('/api/generate-audio', async (req, res) => {
   try {
     const chunks = chunkText(script);
 
-    res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-cache' });
-    res.flushHeaders();
-
-    // Process and write each chunk sequentially so data flows continuously,
-    // preventing Railway's proxy from timing out on an idle connection.
+    // Generate each TTS chunk sequentially so the connection stays active
+    // during generation (prevents Railway proxy timeouts), then send the
+    // complete audio as one response with Content-Length to avoid HTTP/2
+    // chunked transfer encoding issues.
+    const buffers = [];
     for (const chunk of chunks) {
       const result = await openai.audio.speech.create({
         model: 'gpt-4o-mini-tts',
@@ -199,11 +199,17 @@ app.post('/api/generate-audio', async (req, res) => {
         input: chunk,
         response_format: 'mp3',
       });
-      const buf = Buffer.from(await result.arrayBuffer());
-      res.write(buf);
+      buffers.push(Buffer.from(await result.arrayBuffer()));
     }
-    res.end();
-    console.log(`Audio streamed successfully (${chunks.length} chunk(s)).`);
+
+    const audio = Buffer.concat(buffers);
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audio.length,
+      'Cache-Control': 'no-cache',
+    });
+    res.end(audio);
+    console.log(`Audio sent successfully (${chunks.length} chunk(s), ${audio.length} bytes).`);
   } catch (err) {
     console.error('Audio error:', err.message);
     if (!res.headersSent) {
